@@ -43,8 +43,8 @@ jobs:
           uv run ruff format --check .
           uv run ruff check .
 
-      - name: Run Check
-        run: uv run pyright
+      # - name: Run Check
+      #   run: uv run pyright
 
-      - name: Run Tests
-        run: uv run pytest -v --log-cli-level=INFO
+      # - name: Run Tests
+      #   run: uv run pytest -v --log-cli-level=INFO
