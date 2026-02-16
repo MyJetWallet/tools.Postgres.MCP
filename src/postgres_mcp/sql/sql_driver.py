@@ -75,6 +75,10 @@ class DbConnPool:
             return self.pool
 
         url = connection_url or self.connection_url
+        # Normalize connection string (supports .NET ADO.NET format conversion)
+        from postgres_mcp.sql.connection_string import normalize_connection_string
+
+        url = normalize_connection_string(url)
         self.connection_url = url
         if not url:
             self._is_valid = False

@@ -1,0 +1,183 @@
+# Postgres MCP - UAT Connection Commands (Nushell)
+# ================================================
+
+# Connection Details
+# ------------------
+# Host: 65.52.139.20 (simple-db-uat.postgres.database.azure.com)
+# Port: 5432
+# Database: uat
+# User: jetwallet
+# Password: x0KNq5g_O6LS
+
+DATABASE_URI: postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require
+
+# ============================================
+# STEP 1: SETUP
+# ============================================
+
+cd /Users/valentynkit/dev/work/Simple/AI/postgres-mcp
+
+# Install dependencies (first time only)
+uv sync
+
+# ============================================
+# STEP 2: TEST DNS (optional)
+# ============================================
+
+# OrbStack DNS doesn't resolve the hostname, use IP or fix /etc/hosts
+nslookup simple-db-uat.postgres.database.azure.com 8.8.8.8
+
+# Optional: Add to hosts file to use hostname
+echo "65.52.139.20 simple-db-uat.postgres.database.azure.com" | sudo tee -a /etc/hosts
+
+# ============================================
+# STEP 3: TEST CONNECTION WITH PGCLI
+# ============================================
+
+pgcli "postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require"
+
+# Inside pgcli, run: SELECT version();
+# Then: quit
+
+# ============================================
+# STEP 4: TEST PSYCOPG3 SYNC
+# ============================================
+
+uv run python -c "
+import psycopg
+conn = psycopg.connect('postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require')
+print('SYNC OK:', conn.execute('SELECT version()').fetchone())
+conn.close()
+"
+
+# Expected: SYNC OK: ('PostgreSQL 15.14 ...',)
+
+# ============================================
+# STEP 5: TEST PSYCOPG3 ASYNC (NO POOL)
+# ============================================
+
+uv run python -c "
+import asyncio
+import psycopg
+
+async def test():
+    conn = await psycopg.AsyncConnection.connect('postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require')
+    result = await conn.execute('SELECT version()')
+    print('ASYNC OK:', await result.fetchone())
+    await conn.close()
+
+asyncio.run(test())
+"
+
+# Expected: ASYNC OK: ('PostgreSQL 15.14 ...',)
+
+# ============================================
+# STEP 6: TEST PSYCOPG3 ASYNC POOL
+# ============================================
+
+uv run python -c "
+import asyncio
+from psycopg_pool import AsyncConnectionPool
+
+async def test():
+    pool = AsyncConnectionPool('postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require', min_size=1, max_size=2, open=False)
+    await pool.open()
+    async with pool.connection() as conn:
+        result = await conn.execute('SELECT version()')
+        print('POOL OK:', await result.fetchone())
+    await pool.close()
+
+asyncio.run(test())
+"
+
+# Expected: POOL OK: ('PostgreSQL 15.14 ...',)
+# If this fails but Step 5 works, the issue is with connection pooling
+
+# ============================================
+# STEP 7: CHECK POSTGRESQL EXTENSIONS
+# ============================================
+
+pgcli "postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require"
+
+# Inside pgcli, run:
+# SELECT extname, extversion FROM pg_extension;
+
+# Required extensions for full features:
+# - pg_stat_statements (for get_top_queries, analyze_workload_indexes)
+# - hypopg (for index tuning simulation)
+
+# Create if missing (requires superuser or appropriate permissions):
+# CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+# CREATE EXTENSION IF NOT EXISTS hypopg;
+
+# ============================================
+# STEP 8: RUN MCP SERVER
+# ============================================
+
+# Only proceed if Steps 4-6 all passed!
+
+with-env { DATABASE_URI: "postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require" } { uv run postgres-mcp --access-mode=restricted }
+
+# Expected output:
+# INFO     Starting PostgreSQL MCP Server in RESTRICTED mode
+# INFO     Successfully connected to database and initialized connection pool
+
+# Press Ctrl+C to stop
+
+# ============================================
+# STEP 9: RUN MCP INSPECTOR (WEB UI)
+# ============================================
+
+with-env { DATABASE_URI: "postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require" } { uv run mcp dev src/postgres_mcp/server.py -- --access-mode=restricted }
+
+# Opens browser at http://localhost:5173
+# Click on tools (list_schemas, execute_sql, etc.) to test them
+
+# ============================================
+# STEP 10: CONFIGURE CLAUDE DESKTOP (OPTIONAL)
+# ============================================
+
+# File: ~/Library/Application Support/Claude/claude_desktop_config.json
+
+{
+  "mcpServers": {
+    "postgres-uat": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/valentynkit/dev/work/Simple/AI/postgres-mcp",
+        "postgres-mcp",
+        "--access-mode=restricted"
+      ],
+      "env": {
+        "DATABASE_URI": "postgresql://jetwallet:x0KNq5g_O6LS@65.52.139.20:5432/uat?sslmode=require"
+      }
+    }
+  }
+}
+
+# After saving, restart Claude Desktop
+# Then ask: "List all schemas in my database"
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+
+# Problem: DNS doesn't resolve
+# Solution: Use IP (65.52.139.20) instead of hostname, or add to /etc/hosts
+
+# Problem: pgcli works but psycopg3 async pool fails
+# Solution: Check which step fails (4, 5, or 6) to isolate the issue
+#   - Step 4 fails: psycopg3 driver issue
+#   - Step 5 fails: async connection issue
+#   - Step 6 fails: connection pool configuration issue
+
+# Problem: "server closed the connection unexpectedly"
+# Solution: Try sslmode=require instead of sslmode=prefer
+
+# Problem: Connection timeout
+# Solution: Check firewall, VPN, or network connectivity to 65.52.139.20:5432
+
+# Problem: Extensions not found
+# Solution: Contact DBA to install pg_stat_statements and hypopg extensions
